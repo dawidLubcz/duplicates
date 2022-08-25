@@ -1,101 +1,163 @@
 #!/usr/bin/python3
 
+__doc__ = """Script for finding duplicated files in a given directory and subdirectories"""
+
+
 import hashlib
 import re
 import os
 import argparse
+from dataclasses import dataclass
 
 
+@dataclass
 class Item:
+    """
+        Used just to keep together path and file md5 hash.
+    """
+
     def __init__(self, path, md5):
-        self.path = path
-        self.md5 = md5
+        self._path = path
+        self._md5 = md5
+
+    @property
+    def path(self):
+        """path getter"""
+        return self._path
+
+    @property
+    def md5(self):
+        """md5 getter"""
+        return self._md5
 
 
 class FileBrowser:
-    def __init__(self, directoryPath):
-        self.m_directoryPath = directoryPath
+    """
+        Class used to find all files in the given directory and subdirectories.
+        For each found file ItemHandler.handle() will be called.
+    """
 
-    def _process_files(self, directoryPath, name_regex, handler, out_list):
-        for f in os.listdir(directoryPath):
-            filePlusPath = os.path.join(directoryPath, f)
-            if os.path.isfile(filePlusPath):
+    def __init__(self, directory_path):
+        self.directory_path = directory_path
+
+    def _process_files(self, directory_path, name_regex, handler):
+        for file_name in os.listdir(directory_path):
+            file_plus_path = os.path.join(directory_path, file_name)
+            if os.path.isfile(file_plus_path):
                 if not name_regex:
-                    handler.handle(filePlusPath, f, out_list)
+                    handler.handle(file_plus_path, file_name)
                 else:
-                    if name_regex.match(f):
-                        handler.handle(filePlusPath, f, out_list)
-            elif os.path.isdir(filePlusPath):
-                self._process_files(filePlusPath, name_regex, handler, out_list)
+                    if name_regex.match(file_name):
+                        handler.handle(file_plus_path, file_name)
+            elif os.path.isdir(file_plus_path):
+                self._process_files(file_plus_path, name_regex, handler)
 
-    def process_files(self, nameRegex, handler, outList):
+    def process_files(self, name_regex, handler):
+        """Method to find files and validate input.
+        :param name_regex: regex object to filter file names
+        :param handler: this object will be called if some file will be found
+        """
         if not isinstance(handler, Handler):
-            raise ValueError("handler must be a Handler instance %s - %s" % (handler, Handler))
-        if nameRegex and not isinstance(nameRegex, re.Pattern):
-            raise ValueError("nameRegex must be a instance of re.Pattern %s - %s" % (nameRegex, re.Pattern))
-
-        self._process_files(self.m_directoryPath, nameRegex, handler, outList)
+            raise ValueError(f"handler must be a Handler instance {handler} - {Handler}")
+        if name_regex and not isinstance(name_regex, re.Pattern):
+            raise ValueError(
+                f"nameRegex must be a instance of re.Pattern {name_regex} - {re.Pattern}")
+        self._process_files(self.directory_path, name_regex, handler)
 
 
 class Handler:
-    def handle(self, path, fileName, outList): raise NotImplementedError
+    """Base class used by FileBrowser.process_files()
+       to process results"""
+    def handle(self, path, file_name):
+        raise NotImplementedError
 
 
 class ItemHandler(Handler):
+    """Class used for saving data and calculating md5 hashes"""
+
     def __init__(self):
-        pass
+        self._out_list = []
 
-    def _calculate_md5(self, path):
-        hashMd5 = hashlib.md5()
-        with open(path, "rb") as f:
-            for block in iter(lambda: f.read(4096), b''):
-                hashMd5.update(block)
-        return hashMd5.hexdigest()
+    @staticmethod
+    def _calculate_md5(path):
+        hash_md5 = hashlib.md5()
+        with open(path, "rb") as file_object:
+            for block in iter(lambda: file_object.read(4096), b''):
+                hash_md5.update(block)
+        return hash_md5.hexdigest()
 
-    def handle(self, path, fileName, outList):
-        md5 = self._calculate_md5(path)
+    def handle(self, path, file_name):
+        """
+        Callback for each found file
+        :param path: file path
+        :param file_name: file name
+        """
+        md5 = ItemHandler._calculate_md5(path)
         i = Item(path, md5)
-        outList.append(i)
+        self._out_list.append(i)
+
+    def get_files_list(self):
+        """Return gathered data"""
+        return self._out_list
 
 
 class Data:
+    """Class for managing data gathered data"""
+
     def __init__(self):
-        self.items = []
+        self._items = []
 
-    def check_dir(self, path, nameReg = None):
-        o = FileBrowser(path)
-        h = ItemHandler()
-        o.process_files(nameReg, h, self.items)
+    def check_dir(self, path, name_reg=None):
+        """
+        Get files list
+        :param path: root path
+        :param name_reg: file name filter
+        :return: files list
+        """
+        file_browser_object = FileBrowser(path)
+        item_handler_object = ItemHandler()
+        file_browser_object.process_files(name_reg, item_handler_object)
+        self._items = item_handler_object.get_files_list()
+        return self._items
 
-    def check_for_duplicates(self, delete):
-        data_sorted = sorted(self.items, key=lambda item: item.md5)
+    def check_for_duplicates(self, delete=None, files_list=None):
+        """
+        Search for duplicated files
+        :param delete: if not none duplicated files will be deleted
+        :param files_list: custom files list, if none cached list will be used
+        """
+        files_list = files_list or self._items
+        data_sorted = sorted(files_list, key=lambda item: item.md5)
         for i in range(0, len(data_sorted)):
             if i > 0 and data_sorted[i].md5 == data_sorted[i - 1].md5:
-                print("Duplicate found! [%s - %s]" % (str(data_sorted[i - 1].path), str(data_sorted[i].path)))
+                print(f"Duplicate found!"
+                      f" [{str(data_sorted[i - 1].path)} - {str(data_sorted[i].path)}]")
                 if delete:
-                    print("Deleting " + data_sorted[i].path)
+                    print(f"Deleting {data_sorted[i].path}")
                     os.remove(data_sorted[i].path)
 
 
 def main():
+    """Entry function"""
     parser = argparse.ArgumentParser(description='Check duplicates in given folder and subfolders.')
     parser.add_argument('-r', '--root',
                         help='starting directory for the script',
                         default=os.getcwd(),
                         required=False)
-    parser.add_argument('-d', '--delete',
+    parser.add_argument('-data_object', '--delete',
                         action='store_true',
                         help="delete duplicates",
                         required=False)
     args = parser.parse_args()
 
-    print("[root=%s, delete=%s] Calculating md5..." % (args.root, str(args.delete)))
+    print(f"[root={args.root}, delete={str(args.delete)}] Calculating md5...")
 
-    d = Data()
-    d.check_dir(args.root, None)
-    d.check_for_duplicates(args.delete)
+    data_object = Data()
+    data_object.check_dir(args.root, None)
+    data_object.check_for_duplicates(args.delete)
 
     print("Done!")
+
 
 if __name__ == "__main__":
     main()
