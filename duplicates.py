@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 import hashlib
 import re
 import os
@@ -14,44 +16,44 @@ class FileBrowser:
     def __init__(self, directoryPath):
         self.m_directoryPath = directoryPath
 
-    def __processFilesR__(self, directoryPath, nameRegex, handler, outList):
+    def _process_files(self, directoryPath, name_regex, handler, out_list):
         for f in os.listdir(directoryPath):
             filePlusPath = os.path.join(directoryPath, f)
             if os.path.isfile(filePlusPath):
-                if not nameRegex:
-                    handler.Handle(filePlusPath, f, outList)
+                if not name_regex:
+                    handler.handle(filePlusPath, f, out_list)
                 else:
-                    if nameRegex.match(f):
-                        handler.Handle(filePlusPath, f, outList)
+                    if name_regex.match(f):
+                        handler.handle(filePlusPath, f, out_list)
             elif os.path.isdir(filePlusPath):
-                self.__processFilesR__(filePlusPath, nameRegex, handler, outList)
+                self._process_files(filePlusPath, name_regex, handler, out_list)
 
-    def ProcessFiles(self, nameRegex, handler, outList):
+    def process_files(self, nameRegex, handler, outList):
         if not isinstance(handler, Handler):
             raise ValueError("handler must be a Handler instance %s - %s" % (handler, Handler))
         if nameRegex and not isinstance(nameRegex, re.Pattern):
             raise ValueError("nameRegex must be a instance of re.Pattern %s - %s" % (nameRegex, re.Pattern))
 
-        self.__processFilesR__(self.m_directoryPath, nameRegex, handler, outList)
+        self._process_files(self.m_directoryPath, nameRegex, handler, outList)
 
 
 class Handler:
-    def Handle(self, path, fileName, outList): raise NotImplementedError
+    def handle(self, path, fileName, outList): raise NotImplementedError
 
 
 class ItemHandler(Handler):
     def __init__(self):
         pass
 
-    def __calculateMd5__(self, path):
+    def _calculate_md5(self, path):
         hashMd5 = hashlib.md5()
         with open(path, "rb") as f:
             for block in iter(lambda: f.read(4096), b''):
                 hashMd5.update(block)
         return hashMd5.hexdigest()
 
-    def Handle(self, path, fileName, outList):
-        md5 = self.__calculateMd5__(path)
+    def handle(self, path, fileName, outList):
+        md5 = self._calculate_md5(path)
         i = Item(path, md5)
         outList.append(i)
 
@@ -60,19 +62,19 @@ class Data:
     def __init__(self):
         self.items = []
 
-    def AnalyzeDir(self, path, nameReg = None):
+    def check_dir(self, path, nameReg = None):
         o = FileBrowser(path)
         h = ItemHandler()
-        o.ProcessFiles(nameReg, h, self.items)
+        o.process_files(nameReg, h, self.items)
 
-    def RemoveDuplicates(self, delete):
-        dataSorted = sorted(self.items, key=lambda item: item.md5)
-        for i in range(0, len(dataSorted)):
-            if i > 0 and dataSorted[i].md5 == dataSorted[i - 1].md5:
-                print("Duplicate found! [%s - %s]" % (str(dataSorted[i - 1].path), str(dataSorted[i].path)))
+    def check_for_duplicates(self, delete):
+        data_sorted = sorted(self.items, key=lambda item: item.md5)
+        for i in range(0, len(data_sorted)):
+            if i > 0 and data_sorted[i].md5 == data_sorted[i - 1].md5:
+                print("Duplicate found! [%s - %s]" % (str(data_sorted[i - 1].path), str(data_sorted[i].path)))
                 if delete:
-                    print("Deleting " + dataSorted[i].path)
-                    os.remove(dataSorted[i].path)
+                    print("Deleting " + data_sorted[i].path)
+                    os.remove(data_sorted[i].path)
 
 
 def main():
@@ -90,8 +92,8 @@ def main():
     print("[root=%s, delete=%s] Calculating md5..." % (args.root, str(args.delete)))
 
     d = Data()
-    d.AnalyzeDir(args.root, None)
-    d.RemoveDuplicates(args.delete)
+    d.check_dir(args.root, None)
+    d.check_for_duplicates(args.delete)
 
     print("Done!")
 
