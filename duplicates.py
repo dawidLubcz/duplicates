@@ -111,7 +111,7 @@ class FileFoundHandler(Handler):
         """Return gathered data"""
         ready_results = []
         for result in self._out_list:
-            ready_results.append(result.get(timeout=1))
+            ready_results.append(result.get())
         return ready_results
 
 
