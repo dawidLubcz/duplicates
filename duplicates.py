@@ -6,8 +6,10 @@ __doc__ = """Script for finding duplicated files in a given directory and subdir
 import hashlib
 import re
 import os
+import time
 import argparse
 from dataclasses import dataclass
+from multiprocessing import Pool, cpu_count
 
 
 @dataclass
@@ -29,6 +31,9 @@ class Item:
     def md5(self):
         """md5 getter"""
         return self._md5
+
+    def __repr__(self):
+        return f"{self.md5} - {self.path}"
 
 
 class FileBrowser:
@@ -72,11 +77,12 @@ class Handler:
         raise NotImplementedError
 
 
-class ItemHandler(Handler):
+class FileFoundHandler(Handler):
     """Class used for saving data and calculating md5 hashes"""
 
     def __init__(self):
         self._out_list = []
+        self._proc_pool = Pool(cpu_count())
 
     @staticmethod
     def _calculate_md5(path):
@@ -86,19 +92,27 @@ class ItemHandler(Handler):
                 hash_md5.update(block)
         return hash_md5.hexdigest()
 
+    @staticmethod
+    def _do_work(path):
+        md5 = FileFoundHandler._calculate_md5(path)
+        i = Item(path, md5)
+        return i
+
     def handle(self, path, file_name):
         """
         Callback for each found file
         :param path: file path
         :param file_name: file name
         """
-        md5 = ItemHandler._calculate_md5(path)
-        i = Item(path, md5)
-        self._out_list.append(i)
+        ret = self._proc_pool.apply_async(FileFoundHandler._do_work, args=(path,))
+        self._out_list.append(ret)
 
     def get_files_list(self):
         """Return gathered data"""
-        return self._out_list
+        ready_results = []
+        for result in self._out_list:
+            ready_results.append(result.get(timeout=1))
+        return ready_results
 
 
 class Data:
@@ -115,7 +129,7 @@ class Data:
         :return: files list
         """
         file_browser_object = FileBrowser(path)
-        item_handler_object = ItemHandler()
+        item_handler_object = FileFoundHandler()
         file_browser_object.process_files(name_reg, item_handler_object)
         self._items = item_handler_object.get_files_list()
         return self._items
@@ -152,11 +166,13 @@ def main():
 
     print(f"[root={args.root}, delete={str(args.delete)}] Calculating md5...")
 
+    time_start = time.time()
     data_object = Data()
     data_object.check_dir(args.root, None)
     data_object.check_for_duplicates(args.delete)
+    time_elapsed = time.time() - time_start
 
-    print("Done!")
+    print(f"Done, took={time_elapsed:.2f} seconds")
 
 
 if __name__ == "__main__":
