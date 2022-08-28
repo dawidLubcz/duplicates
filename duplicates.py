@@ -8,6 +8,7 @@ import re
 import os
 import time
 import argparse
+import sys
 from dataclasses import dataclass
 from multiprocessing import Pool, cpu_count
 
@@ -45,17 +46,24 @@ class FileBrowser:
     def __init__(self, directory_path):
         self.directory_path = directory_path
 
+    @staticmethod
+    def _handle_item(handler, file_plus_path, filename):
+        handler.handle(file_plus_path, filename)
+
     def _process_files(self, directory_path, name_regex, handler):
-        for file_name in os.listdir(directory_path):
-            file_plus_path = os.path.join(directory_path, file_name)
-            if os.path.isfile(file_plus_path):
-                if not name_regex:
-                    handler.handle(file_plus_path, file_name)
-                else:
-                    if name_regex.match(file_name):
-                        handler.handle(file_plus_path, file_name)
-            elif os.path.isdir(file_plus_path):
-                self._process_files(file_plus_path, name_regex, handler)
+        try:
+            for file_name in os.listdir(directory_path):
+                file_plus_path = os.path.join(directory_path, file_name)
+                if os.path.isfile(file_plus_path):
+                    if not name_regex:
+                        FileBrowser._handle_item(handler, file_plus_path, file_name)
+                    else:
+                        if name_regex.match(file_name):
+                            FileBrowser._handle_item(handler, file_plus_path, file_name)
+                elif os.path.isdir(file_plus_path):
+                    self._process_files(file_plus_path, name_regex, handler)
+        except PermissionError:
+            print(f"[Error] Permission denied to: {directory_path}")
 
     def process_files(self, name_regex, handler):
         """Method to find files and validate input.
@@ -74,6 +82,7 @@ class Handler:
     """Base class used by FileBrowser.process_files()
        to process results"""
     def handle(self, path, file_name):
+        """Callback method"""
         raise NotImplementedError
 
 
@@ -82,7 +91,8 @@ class FileFoundHandler(Handler):
 
     def __init__(self):
         self._out_list = []
-        self._proc_pool = Pool(cpu_count())
+        self._found_files = []
+        self._cache = None
 
     @staticmethod
     def _calculate_md5(path):
@@ -104,14 +114,28 @@ class FileFoundHandler(Handler):
         :param path: file path
         :param file_name: file name
         """
-        ret = self._proc_pool.apply_async(FileFoundHandler._do_work, args=(path,))
-        self._out_list.append(ret)
+        self._found_files.append(path)
+        sys.stdout.write(f"Files count: {len(self._found_files)}   \r")
+        sys.stdout.flush()
 
     def get_files_list(self):
         """Return gathered data"""
+        if self._cache:
+            return self._cache
+
+        def update_std_out(index, size):
+            sys.stdout.write(f"Progress: {index}/{size}   \r")
+            sys.stdout.flush()
+
         ready_results = []
-        for result in self._out_list:
-            ready_results.append(result.get())
+        with Pool(cpu_count()) as pool:
+            workers = []
+            for file_path in self._found_files:
+                workers.append(pool.apply_async(FileFoundHandler._do_work, args=(file_path,)))
+            for i, result in enumerate(workers):
+                ready_results.append(result.get())
+                update_std_out(i, len(workers))
+        self._cache = ready_results
         return ready_results
 
 
@@ -130,7 +154,10 @@ class Data:
         """
         file_browser_object = FileBrowser(path)
         item_handler_object = FileFoundHandler()
+
+        print("Indexing...")
         file_browser_object.process_files(name_reg, item_handler_object)
+        print("Calculating md5...")
         self._items = item_handler_object.get_files_list()
         return self._items
 
@@ -140,15 +167,16 @@ class Data:
         :param delete: if not none duplicated files will be deleted
         :param files_list: custom files list, if none cached list will be used
         """
+        print("Duplicate searching...")
         files_list = files_list or self._items
         data_sorted = sorted(files_list, key=lambda item: item.md5)
-        for i in range(0, len(data_sorted)):
-            if i > 0 and data_sorted[i].md5 == data_sorted[i - 1].md5:
+        for i, item_at_i in enumerate(data_sorted):
+            if i > 0 and item_at_i.md5 == data_sorted[i - 1].md5:
                 print(f"Duplicate found!"
-                      f" [{str(data_sorted[i - 1].path)} - {str(data_sorted[i].path)}]")
+                      f" [{str(data_sorted[i - 1].path)} - {str(item_at_i.path)}]")
                 if delete:
-                    print(f"Deleting {data_sorted[i].path}")
-                    os.remove(data_sorted[i].path)
+                    print(f"Deleting {item_at_i.path}")
+                    os.remove(item_at_i.path)
 
 
 def main():
@@ -164,14 +192,17 @@ def main():
                         required=False)
     args = parser.parse_args()
 
-    print(f"[root={args.root}, delete={str(args.delete)}] Calculating md5...")
+    print(f"[root={args.root}, delete={str(args.delete)}]")
 
     time_start = time.time()
-    data_object = Data()
-    data_object.check_dir(args.root, None)
-    data_object.check_for_duplicates(args.delete)
-    time_elapsed = time.time() - time_start
-
+    try:
+        data_object = Data()
+        data_object.check_dir(args.root, None)
+        data_object.check_for_duplicates(args.delete)
+    except KeyboardInterrupt:
+        print("Interrupted!")
+    finally:
+        time_elapsed = time.time() - time_start
     print(f"Done, took={time_elapsed:.2f} seconds")
 
 
