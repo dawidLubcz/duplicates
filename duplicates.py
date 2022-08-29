@@ -11,6 +11,40 @@ import argparse
 import sys
 from dataclasses import dataclass
 from multiprocessing import Pool, cpu_count
+from datetime import datetime
+
+
+@dataclass
+class FileMetadata:
+    """
+        File basic params.
+    """
+
+    def __init__(self, filepath: str) -> None:
+        self._size = os.path.getsize(filepath)
+        self._mtime = os.path.getmtime(filepath)
+        self._ctime = os.path.getctime(filepath)
+
+    @property
+    def size(self):
+        """file size"""
+        return self._size
+
+    @property
+    def mtime(self):
+        """file modified time"""
+        return self._mtime
+
+    @property
+    def ctime(self):
+        """file created time"""
+        return self._ctime
+
+    def __repr__(self) -> str:
+        format = '%Y-%m-%d %H:%M:%S'
+        return f"FileMetadata: size={self.size/1024:.2f}kb " \
+               f"created={datetime.utcfromtimestamp(self.ctime).strftime(format)} " \
+               f"modified={datetime.utcfromtimestamp(self.mtime).strftime(format)}"
 
 
 @dataclass
@@ -19,9 +53,10 @@ class Item:
         Used just to keep together path and file md5 hash.
     """
 
-    def __init__(self, path, md5):
+    def __init__(self, path: str, md5: str, metadata: FileMetadata):
         self._path = path
         self._md5 = md5
+        self._metadata = metadata
 
     @property
     def path(self):
@@ -32,6 +67,11 @@ class Item:
     def md5(self):
         """md5 getter"""
         return self._md5
+
+    @property
+    def metadata(self):
+        """metadata getter"""
+        return self._metadata
 
     def __repr__(self):
         return f"{self.md5} - {self.path}"
@@ -105,7 +145,8 @@ class FileFoundHandler(Handler):
     @staticmethod
     def _do_work(path):
         md5 = FileFoundHandler._calculate_md5(path)
-        i = Item(path, md5)
+        metadata = FileMetadata(path)
+        i = Item(path, md5, metadata)
         return i
 
     def handle(self, path, file_name):
@@ -168,15 +209,21 @@ class Data:
         :param files_list: custom files list, if none cached list will be used
         """
         print("Duplicate searching...")
+        count = 0
+        wasted_space = 0
         files_list = files_list or self._items
         data_sorted = sorted(files_list, key=lambda item: item.md5)
         for i, item_at_i in enumerate(data_sorted):
             if i > 0 and item_at_i.md5 == data_sorted[i - 1].md5:
-                print(f"Duplicate found!"
-                      f" [{str(data_sorted[i - 1].path)} - {str(item_at_i.path)}]")
+                count += 1
+                wasted_space += item_at_i.metadata.size
+                print(f"{count}. Duplicate found! "
+                      f"[{item_at_i.metadata}] "
+                      f"\n\t[{str(data_sorted[i - 1].path)} - {str(item_at_i.path)}]")
                 if delete:
                     print(f"Deleting {item_at_i.path}")
                     os.remove(item_at_i.path)
+        print(f"\nSummary:\n\tduplicates={count}\n\twasted space={wasted_space/1024:.2f}kb\n")
 
 
 def main():
