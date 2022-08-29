@@ -91,6 +91,7 @@ class FileBrowser:
         handler.handle(file_plus_path, filename)
 
     def _process_files(self, directory_path, name_regex, handler):
+        # TODO: Use dfs instead of recursion
         try:
             for file_name in os.listdir(directory_path):
                 file_plus_path = os.path.join(directory_path, file_name)
@@ -130,7 +131,6 @@ class FileFoundHandler(Handler):
     """Class used for saving data and calculating md5 hashes"""
 
     def __init__(self):
-        self._out_list = []
         self._found_files = []
         self._cache = None
 
